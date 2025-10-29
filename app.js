@@ -128,6 +128,6 @@ app.post('/free', async (req, res) => {
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Nếu API chỉ nội bộ VPS, có thể đổi 0.0.0.0 -> '127.0.0.1'
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Control API listening on :${PORT}`);
 });
