@@ -24,9 +24,13 @@ const {
 const redis = new Redis(REDIS_URL);
 
 function requireApiKey(req, res, next) {
-  if (!API_KEY) return next();
+  // BỎ QUA kiểm tra cho /proxy
+  if (req.path === '/proxy') return next();
+
   const k = req.header('x-api-key');
-  if (k !== API_KEY) return res.status(401).json({ error: 'unauthorized' });
+  if (process.env.API_KEY && k !== process.env.API_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
   next();
 }
 app.use(requireApiKey);
