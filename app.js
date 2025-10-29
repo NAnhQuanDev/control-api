@@ -125,9 +125,54 @@ app.post('/free', async (req, res) => {
   }
 });
 
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', (_req, res) => res.json({ ok: true }));'
+
+app.get('/proxy', async (req, res) => {
+  try {
+    const port = parseInt(String(req.query.port || ''), 10);
+    const path = String(req.query.path || '/download');
+
+    if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+      return res.status(400).json({ error: 'invalid port' });
+    }
+
+    // (Tối giản theo yêu cầu của bạn: chỉ cần port; nếu muốn bảo mật hơn,
+    // bạn có thể kiểm tra port có đang in-use trong Redis: port:inuse:<port>)
+
+    const opts = {
+      host: '127.0.0.1',
+      port,
+      path,
+      method: 'GET',
+      headers: {
+        // forward các header cơ bản nếu cần
+      }
+    };
+
+    const proxyReq = http.request(opts, (upstream) => {
+      // copy status + headers xuống client
+      res.status(upstream.statusCode || 200);
+      Object.entries(upstream.headers).forEach(([k, v]) => {
+        if (v) res.setHeader(k, v);
+      });
+      upstream.pipe(res);
+    });
+
+    proxyReq.on('error', (err) => {
+      console.error('proxy error:', err.message);
+      res.status(502).json({ error: 'bad gateway' });
+    });
+
+    proxyReq.end();
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'internal' });
+  }
+});
 
 // Nếu API chỉ nội bộ VPS, có thể đổi 0.0.0.0 -> '127.0.0.1'
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Control API listening on :${PORT}`);
 });
+
+
