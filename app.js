@@ -3,7 +3,7 @@ import express from 'express';
 import Redis from 'ioredis';
 import dayjs from 'dayjs';
 import rateLimit from 'express-rate-limit';
-import http from 'node:http';
+import http from 'http';
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
