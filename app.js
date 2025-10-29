@@ -125,7 +125,7 @@ app.post('/free', async (req, res) => {
   }
 });
 
-app.get('/health', (_req, res) => res.json({ ok: true }));'
+app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.get('/proxy', async (req, res) => {
   try {
