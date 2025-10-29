@@ -3,6 +3,7 @@ import express from 'express';
 import Redis from 'ioredis';
 import dayjs from 'dayjs';
 import rateLimit from 'express-rate-limit';
+import * as http from 'node:http'; 
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
@@ -24,9 +25,7 @@ const {
 const redis = new Redis(REDIS_URL);
 
 function requireApiKey(req, res, next) {
-  // BỎ QUA kiểm tra cho /proxy
-  if (req.path === '/proxy') return next();
-
+  if (req.path === '/proxy') return next();   // cho /proxy đi qua, tránh 401
   const k = req.header('x-api-key');
   if (process.env.API_KEY && k !== process.env.API_KEY) {
     return res.status(401).json({ error: 'unauthorized' });
@@ -133,46 +132,41 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 
 app.get('/proxy', async (req, res) => {
   try {
-    const port = parseInt(String(req.query.port || ''), 10);
-    const path = String(req.query.path || '/download');
+    const port = Number(req.query.port);
+    const path = typeof req.query.path === 'string' ? req.query.path : '/download';
 
-    if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
       return res.status(400).json({ error: 'invalid port' });
     }
 
-    // (Tối giản theo yêu cầu của bạn: chỉ cần port; nếu muốn bảo mật hơn,
-    // bạn có thể kiểm tra port có đang in-use trong Redis: port:inuse:<port>)
+    const opts = { host: '127.0.0.1', port, path, method: 'GET', timeout: 15000 };
+    const hopByHop = new Set([
+      'connection','keep-alive','proxy-authenticate','proxy-authorization',
+      'te','trailer','transfer-encoding','upgrade'
+    ]);
 
-    const opts = {
-      host: '127.0.0.1',
-      port,
-      path,
-      method: 'GET',
-      headers: {
-        // forward các header cơ bản nếu cần
+    const upstreamReq = http.request(opts, (upstream) => {
+      res.statusCode = upstream.statusCode || 200;
+      for (const [k, v] of Object.entries(upstream.headers)) {
+        if (v && !hopByHop.has(k.toLowerCase()) && !res.headersSent) res.setHeader(k, v);
       }
-    };
-
-    const proxyReq = http.request(opts, (upstream) => {
-      // copy status + headers xuống client
-      res.status(upstream.statusCode || 200);
-      Object.entries(upstream.headers).forEach(([k, v]) => {
-        if (v) res.setHeader(k, v);
-      });
       upstream.pipe(res);
     });
 
-    proxyReq.on('error', (err) => {
-      console.error('proxy error:', err.message);
-      res.status(502).json({ error: 'bad gateway' });
+    upstreamReq.on('timeout', () => upstreamReq.destroy(new Error('upstream timeout')));
+    upstreamReq.on('error', (err) => {
+      console.error('[/proxy] upstream error:', err.message);
+      if (!res.headersSent) res.status(502).json({ error: 'bad gateway', detail: err.message });
+      else try { res.end(); } catch (_e) {}
     });
 
-    proxyReq.end();
+    upstreamReq.end();
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'internal' });
+    console.error('[/proxy] handler error:', e);
+    if (!res.headersSent) res.status(500).json({ error: 'internal', detail: String(e.message || e) });
   }
 });
+
 
 // Nếu API chỉ nội bộ VPS, có thể đổi 0.0.0.0 -> '127.0.0.1'
 app.listen(PORT, '0.0.0.0', () => {
