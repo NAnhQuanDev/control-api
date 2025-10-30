@@ -299,7 +299,7 @@ app.get('/proxy', async (req, res) => {
 
     log.info('PROXY', `Forwarding request`, { port, path, ip: req.ip });
 
-    const opts = { host: '127.0.0.1', port, path, method: 'GET', timeout: 15000 };
+    const opts = { host: '127.0.0.1', port, path, method: 'GET', timeout: 180000  // 3 phút };
     const hopByHop = new Set([
       'connection','keep-alive','proxy-authenticate','proxy-authorization',
       'te','trailer','transfer-encoding','upgrade'
