@@ -287,7 +287,7 @@ app.post('/free', async (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-app.get('/proxy', async (req, res) => {
+app.all('/proxy', async (req, res) => {
   try {
     const port = Number(req.query.port);
     const path = typeof req.query.path === 'string' ? req.query.path : '/download';
@@ -297,55 +297,72 @@ app.get('/proxy', async (req, res) => {
       return res.status(400).json({ error: 'invalid port' });
     }
 
-    log.info('PROXY', `Forwarding request`, { port, path, ip: req.ip });
+    log.info('PROXY', `Forwarding`, { port, path, method: req.method });
 
-    const opts = { host: '127.0.0.1', port, path, method: 'GET', timeout: 15000 };
-    const hopByHop = new Set([
+    // Loại hop-by-hop theo RFC 7230
+    const hop = new Set([
       'connection','keep-alive','proxy-authenticate','proxy-authorization',
-      'te','trailer','transfer-encoding','upgrade'
+      'te','trailer','transfer-encoding','upgrade','host'
     ]);
 
-    const startTime = Date.now();
+    const headers = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (!hop.has(k.toLowerCase())) headers[k] = v;
+    }
+    headers['host'] = `127.0.0.1:${port}`; // upstream host nội bộ
+
+    const opts = {
+      host: '127.0.0.1',
+      port,
+      path,
+      method: req.method,   // giữ nguyên GET/HEAD/…
+      headers
+      // KHÔNG đặt timeout cứng 15s cho stream dài
+    };
+
     const upstreamReq = http.request(opts, (upstream) => {
-      const duration = Date.now() - startTime;
-      log.success('PROXY', `Upstream responded`, { 
-        port, 
-        status: upstream.statusCode, 
-        duration: `${duration}ms` 
-      });
-      
+      // Pass status + headers
       res.statusCode = upstream.statusCode || 200;
       for (const [k, v] of Object.entries(upstream.headers)) {
-        if (v && !hopByHop.has(k.toLowerCase()) && !res.headersSent) res.setHeader(k, v);
+        if (!hop.has(k.toLowerCase()) && v != null && !res.headersSent) {
+          res.setHeader(k, v);
+        }
       }
-      upstream.pipe(res);
-      
-      upstream.on('end', () => {
-        const totalDuration = Date.now() - startTime;
-        log.success('PROXY', `Transfer completed`, { 
-          port, 
-          totalDuration: `${totalDuration}ms` 
-        });
+
+      upstream.on('error', (err) => {
+        log.error('PROXY', 'Upstream stream error', err);
+        if (!res.headersSent) res.status(502).json({ error: 'bad gateway', detail: err.message });
+        else try { res.end(); } catch (_) {}
       });
+
+      upstream.pipe(res);
     });
 
-    upstreamReq.on('timeout', () => {
-      log.error('PROXY', `Timeout after 15s`, { port });
-      upstreamReq.destroy(new Error('upstream timeout'));
+    // Inactivity timeout (tuỳ chọn): kill nếu không có activity 5 phút
+    upstreamReq.setTimeout(5 * 60 * 1000, () => {
+      log.error('PROXY', `Idle timeout`, { port });
+      upstreamReq.destroy(new Error('idle timeout'));
     });
-    
+
     upstreamReq.on('error', (err) => {
       log.error('PROXY', `Upstream error`, err);
       if (!res.headersSent) res.status(502).json({ error: 'bad gateway', detail: err.message });
-      else try { res.end(); } catch (_e) {}
+      else try { res.end(); } catch (_) {}
     });
 
-    upstreamReq.end();
+    // Nếu client đóng → hủy upstream để khỏi treo socket
+    const abortUpstream = () => { try { upstreamReq.destroy(); } catch (_) {} };
+    res.on('close', abortUpstream);
+    req.on('aborted', abortUpstream);
+
+    // Pipe body (nếu có, thường GET/HEAD thì không)
+    req.pipe(upstreamReq);
   } catch (e) {
     log.error('PROXY', 'Handler error', e);
     if (!res.headersSent) res.status(500).json({ error: 'internal', detail: String(e.message || e) });
   }
 });
+
 
 // ═══════════════════════════════════════════════════════════
 // SERVER START
