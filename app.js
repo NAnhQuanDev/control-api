@@ -16,7 +16,7 @@ const {
   REDIS_URL = 'redis://127.0.0.1:6379',
   PORT_POOL_START = '29000',
   PORT_POOL_END = '39999',
-  RESERVE_TTL_SEC = '60',
+  RESERVE_TTL_SEC = '180',
   REGISTER_TTL_DEFAULT_SEC = '900',
   REGISTER_TTL_MAX_SEC = '86400',
   API_KEY,
@@ -144,6 +144,22 @@ const REG_MAX     = parseInt(REGISTER_TTL_MAX_SEC, 10);
 // HELPERS
 // ═══════════════════════════════════════════════════════════
 async function findFreePort() {
+  const totalPorts = POOL_END - POOL_START + 1;
+  const randomAttempts = 5; // Thử random 5 lần trước
+  
+  // Thử random port 5 lần
+  for (let attempt = 0; attempt < randomAttempts; attempt++) {
+    // Chọn random port trong khoảng
+    const p = POOL_START + Math.floor(Math.random() * totalPorts);
+    
+    const inUse = await redis.exists(`port:inuse:${p}`);
+    if (inUse) continue;
+    const reserved = await redis.exists(`port:${p}`);
+    if (reserved) continue;
+    return p;
+  }
+  
+  // Nếu random 5 lần không tìm được, fallback về duyệt tuần tự (tăng dần)
   for (let p = POOL_START; p <= POOL_END; p++) {
     const inUse = await redis.exists(`port:inuse:${p}`);
     if (inUse) continue;
